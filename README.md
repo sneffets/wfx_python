@@ -1,5 +1,16 @@
 # WFX Python
 
+## Description
+
+A C++ [WFX Plugin](https://www.ghisler.com/plugins.htm) for [Total Commander](https://www.ghisler.com/) that:
+
+* serves as native 'bridge' to a user defines Python WFX extension for Total Commander
+* gives YOU the possibility to extend Total Commander with Python
+* samples are:
+  - AWS S3 WFX Plugin using boto3
+* is implemented using [pybind11](https://github.com/pybind/pybind11)
+* can be used as template to create other C++ WFX plugins
+
 ## Preparation
 
 ### Python embedded
