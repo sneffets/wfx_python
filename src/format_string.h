@@ -199,3 +199,17 @@ inline void debug_msg(Ts&&... ts)
 	OutputDebugStringW(msg.c_str());
 #endif
 };
+
+template<
+	char spacing_char = 0,
+	typename... Ts
+>
+inline void debug_msg_a(Ts&&... ts)
+{
+#ifdef _DEBUG
+	const auto msg = wfx::Tools::format_string<spacing_char>(ts..., "\n");
+	OutputDebugStringA(msg.c_str());
+#endif
+};
+
+

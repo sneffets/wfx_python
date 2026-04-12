@@ -6,27 +6,16 @@
 // WFX Callback Functions
 // -------------------------------------------------------
 
-int __stdcall ProgressProcW(int PluginNr, WCHAR* SourceName,
-                            WCHAR* TargetName, int PercentDone)
-{
-  OutputDebugStringW(L"ProgressProcW called\n");
-  return 0;
-}
-
 struct PluginInfo
 {
   int PluginNr;
-  tProgressProcW progressProc;
-  tLogProcW logProc;
-  tRequestProcW requestProc;
+  tProgressProcW progressProc = 0;
+  tLogProcW logProc = 0;
+  tRequestProcW requestProc = 0;
 
-  PluginInfo(tProgressProcW progressProc) : progressProc(progressProc)
-  {
-
-  }
 };
 
-PluginInfo pluginInfo(ProgressProcW);
+PluginInfo pluginInfo;
 
 std::filesystem::path map_filename(WCHAR* pathToMap)
 {

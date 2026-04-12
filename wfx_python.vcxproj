@@ -11,7 +11,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\wfx_simple.cpp" />
+    <ClCompile Include="src\wfx_python.cpp" />
+    <ClCompile Include="src\wfx_simple.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <None Include="python\FileName.py">
       <FileType>Document</FileType>
     </None>
@@ -24,6 +28,7 @@
   <ItemGroup>
     <ClInclude Include="src\framework.h" />
     <ClInclude Include="src\pch.h" />
+    <ClInclude Include="src\pybind11_helper.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
