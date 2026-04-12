@@ -1,10 +1,4 @@
-# Der Kernwitz: find_first ist ein Python-Generator.
-# C++ speichert das Generator-Objekt pro Handle in der Map und ruft einfach
-# __next__() auf – damit ist das parallele-Panels-Problem elegant gelöst
-# ohne irgendwelchen globalen State auf Python-Seite. Jedes Handle hat seinen
-# eigenen Generator mit eigenem Zustand.
-
-import tcbridge  # das PYBIND11_EMBEDDED_MODULE von oben
+from PluginAPI import *
 
 from datetime import datetime
 
@@ -72,37 +66,6 @@ TREE = {
 }
 
 MTIME = datetime(2024, 6, 15, 12, 0, 0)
-
-class WfxPlugin:
-    """Basisklasse – definiert das Interface"""
-
-    def set_ini_path(self, ini_path: str):
-        pass
-
-    def find_first(self, path: str):
-        """Muss einen Generator/Iterator zurückgeben der DirEntry-Dicts yieldet"""
-        raise NotImplementedError
-
-    def get_file(self, remote: str, local: str, flags: int) -> int:
-        raise NotImplementedError
-
-    def put_file(self, local: str, remote: str, flags: int) -> int:
-        raise NotImplementedError
-
-    def delete_file(self, remote: str) -> bool:
-        raise NotImplementedError
-
-    def mkdir(self, path: str) -> bool:
-        raise NotImplementedError
-
-
-class DirEntry:
-    """Was find_first yielden soll"""
-    def __init__(self, name: str, size: int, is_dir: bool, mtime=None):
-        self.name   = name
-        self.size   = size
-        self.is_dir = is_dir
-        self.mtime  = mtime
 
 class S3Plugin(WfxPlugin):
 
