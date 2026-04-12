@@ -35,6 +35,196 @@ static py::object               g_plugin;  // Instanz der Plugin-Klasse
 static std::unordered_map<HANDLE, py::object> g_iterators;
 static std::atomic<uintptr_t>                 g_nextHandle{ 1 };
 
+// Separate Map für Root-Einträge
+static std::unordered_map<HANDLE, std::pair<std::vector<std::string>, size_t>> g_rootIterators;
+
+
+// Map: Plugin - Name → Python Plugin - Instanz
+static std::unordered_map<std::string, py::object> g_plugins;
+
+// Hilfsfunktion: Pfad aufsplitten
+// "\S3\bucket\prefix\" → {"S3", "bucket\prefix\"}
+static std::pair<std::string, std::string> splitPath(const std::string& path)
+{
+  // führenden \ entfernen
+  std::string p = path;
+  if (!p.empty() && p[0] == '\\') p = p.substr(1);
+
+  auto pos = p.find('\\');
+  if (pos == std::string::npos)
+    return { p, "\\" };  // nur Plugin-Name, kein Unterpfad
+
+  return { p.substr(0, pos), "\\" + p.substr(pos + 1) };
+}
+
+static std::string wcharToUtf8(const WCHAR* wstr)
+{
+  if (!wstr || !*wstr) return {};
+  int len = WideCharToMultiByte(CP_UTF8, 0, wstr, -1,
+                                nullptr, 0, nullptr, nullptr);
+  std::string result(len - 1, '\0'); // len includes null terminator
+  WideCharToMultiByte(CP_UTF8, 0, wstr, -1,
+                      result.data(), len, nullptr, nullptr);
+  return result;
+}
+
+static std::vector<std::pair<std::string, std::filesystem::path>>
+readPluginsFromIni(const std::string& iniPath)
+{
+  std::vector<std::pair<std::string, std::filesystem::path>> result;
+
+  // Alle Keys aus [Plugins] Section lesen
+  // GetPrivateProfileSection gibt alle Key=Value Paare auf einmal
+  char buf[4096] = {};
+  DWORD written = GetPrivateProfileSectionA(
+    "Plugins",
+    buf,
+    sizeof(buf),
+    iniPath.c_str()
+  );
+
+  if (written == 0) return result;
+
+  // buf ist null-separated, doppel-null terminiert
+  // Format: "Name=C:\path\to\plugin.py\0Name2=...\0\0"
+  const char* p = buf;
+  while (*p) // TODO: einfacher machen
+  {
+    std::string entry(p);
+    p += entry.size() + 1; // nächster Eintrag
+
+    auto eq = entry.find('=');
+    if (eq == std::string::npos) continue;
+
+    std::string name = entry.substr(0, eq);
+    std::string path = entry.substr(eq + 1);
+
+    // Whitespace trimmen
+    auto trim = [](std::string& s)
+      {
+        s.erase(0, s.find_first_not_of(" \t"));
+        s.erase(s.find_last_not_of(" \t") + 1);
+      };
+    trim(name);
+    trim(path);
+
+    if (!name.empty() && !path.empty())
+      result.emplace_back(name, std::filesystem::path(path));
+  }
+
+  return result;
+}
+
+static void fillFindData(WIN32_FIND_DATA* data, py::object entry);
+static void fillFindDataFromDict(WIN32_FIND_DATAW* data, py::dict entry)
+{
+  memset(data, 0, sizeof(WIN32_FIND_DATAW));
+
+  std::string name = entry["name"].cast<std::string>();
+  MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1,
+                      data->cFileName, MAX_PATH);
+
+  bool is_dir = entry["is_dir"].cast<bool>();
+  data->dwFileAttributes = is_dir ? FILE_ATTRIBUTE_DIRECTORY
+    : FILE_ATTRIBUTE_NORMAL;
+}
+
+static void fillRootEntry(WIN32_FIND_DATAW* data, const std::string& name)
+{
+  memset(data, 0, sizeof(WIN32_FIND_DATAW));
+  MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1,
+                      data->cFileName, MAX_PATH);
+  data->dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+}
+
+HANDLE __stdcall FsFindFirstW(WCHAR* path, WIN32_FIND_DATAW* data)
+{
+  std::string p = wcharToUtf8(path);
+
+  // In FsFindFirstW bei Root:
+  if (p == "\\" || p.empty())
+  {
+    std::vector<std::string> names;
+    for (auto& [name, _] : g_plugins)
+      names.push_back(name);
+
+    if (names.empty())
+    {
+      SetLastError(ERROR_NO_MORE_FILES);
+      return INVALID_HANDLE_VALUE;
+    }
+
+    HANDLE h = reinterpret_cast<HANDLE>(g_nextHandle++);
+    g_rootIterators[h] = { names, 0 };
+
+    // Ersten Eintrag direkt befüllen
+    fillRootEntry(data, names[0]);
+    g_rootIterators[h].second = 1; // Index auf nächsten
+    return h;
+  }
+
+  return pyCall([&]() -> HANDLE
+                {
+
+                  // Root "\" → alle registrierten Plugins als Verzeichnisse
+                  if (p == "\\" || p.empty())
+                  {
+                    // Synthetic iterator über g_plugins keys
+                    auto keys = std::make_shared<std::vector<std::string>>();
+                    for (auto& [name, _] : g_plugins)
+                      keys->push_back(name);
+
+                    // Als py::object verpacken damit es in g_iterators passt
+                    // Kleiner Trick: Python-Liste daraus machen und iter() drauf
+                    py::list lst;
+                    for (auto& name : *keys)
+                    {
+                      py::dict entry;
+                      entry["name"] = name;
+                      entry["is_dir"] = true;
+                      entry["size"] = 0;
+                      entry["mtime"] = py::none();
+                      lst.append(entry);
+                    }
+                    py::object iterator = py::module_::import("builtins")
+                      .attr("iter")(lst);
+
+                    HANDLE h = reinterpret_cast<HANDLE>(g_nextHandle++);
+                    g_iterators[h] = iterator;
+
+                    // ersten Eintrag holen
+                    py::dict first = iterator.attr("__next__")().cast<py::dict>();
+                    fillFindDataFromDict(data, first);
+                    return h;
+                  }
+
+                  // Normaler Pfad → an Plugin dispatchen
+                  auto [pluginName, subPath] = splitPath(p);
+
+                  auto it = g_plugins.find(pluginName);
+                  if (it == g_plugins.end())
+                  {
+                    SetLastError(ERROR_NO_MORE_FILES);
+                    return INVALID_HANDLE_VALUE;
+                  }
+
+                  py::object iterator = it->second.attr("find_first")(subPath);
+                  if (iterator.is_none())
+                  {
+                    SetLastError(ERROR_NO_MORE_FILES);
+                    return INVALID_HANDLE_VALUE;
+                  }
+
+                  HANDLE h = reinterpret_cast<HANDLE>(g_nextHandle++);
+                  g_iterators[h] = iterator;
+
+                  py::object entry = iterator.attr("__next__")();
+                  fillFindData(data, entry);
+                  return h;
+
+                }, INVALID_HANDLE_VALUE);
+}
+
 
 
 PYBIND11_EMBEDDED_MODULE(tcbridge, m)
@@ -187,22 +377,34 @@ int __stdcall FsInitW(int PluginNr, tProgressProcW pProgressProcW,
   //test[0] = 0; // else it would be suggested as default
   //pRequestProcW(PluginNr, RT_Password, NULL, (WCHAR*)L"Pasword:", test, 256);
   //debug_msg(L"pRequestProcW returned ", test, L" as pasword");
+
   debug_msg(L"creating scoped_interpreter");
 
   g_interp = new py::scoped_interpreter{};
 
-  py::module_ sys = py::module_::import("sys");
-  sys.attr("path").attr("append")("../../python");
+  // INI-Format:
+  // [Plugins]
+  // S3=C:\plugins\s3plugin.py
+  // Test=C:\plugins\testplugin.py
 
-  try
+  for (auto& [name, scriptPath] : readPluginsFromIni(R"(Plugins.ini)"))
   {
-    py::module_ mod = py::module_::import("s3plugin");
-    g_plugin = mod.attr("S3Plugin")();  // Instanz anlegen
-  }
-  catch (std::exception& ex)
-  {
-    std::string s(ex.what());
-    debug_msg_a("hi");
+    // sys.path erweitern damit import funktioniert
+    py::module_::import("sys")
+      .attr("path")
+      .attr("append")(scriptPath.parent_path().string());
+
+    try
+    {
+      py::module_ mod = py::module_::import(scriptPath.stem().string().c_str());
+      py::object  plugin = mod.attr(name.c_str())();
+      g_plugins[name] = plugin;
+    }
+    catch (std::exception& ex)
+    {
+      std::string s(ex.what());
+      debug_msg_a("Error while loading plugin ", name, " from ini: ", s);
+    }
   }
 
   return 0;
@@ -215,7 +417,7 @@ void __stdcall FsSetDefaultParams(FsDefaultParamStruct* dps)
   memset(dps, 0, sizeof(FsDefaultParamStruct));
 }
 
-HANDLE __stdcall FsFindFirstW(WCHAR* path, WIN32_FIND_DATA* data)
+HANDLE __stdcall FsFindFirstW_old(WCHAR* path, WIN32_FIND_DATA* data)
 {
   if (path == nullptr || data == nullptr)
   {
@@ -251,6 +453,23 @@ HANDLE __stdcall FsFindFirstW(WCHAR* path, WIN32_FIND_DATA* data)
 BOOL __stdcall FsFindNextW(HANDLE hdl, WIN32_FIND_DATA* data)
 {
   debug_msg(L"FsFindNextW called");
+
+  // Root-Iterator?
+  auto rootIt = g_rootIterators.find(hdl);
+  if (rootIt != g_rootIterators.end())
+  {
+    auto& [names, idx] = rootIt->second;
+    if (idx >= names.size())
+    {
+      g_rootIterators.erase(hdl);
+      SetLastError(ERROR_NO_MORE_FILES);
+      return FALSE;
+    }
+    fillRootEntry(data, names[idx++]);
+    return TRUE;
+  }
+
+  // normaler Python-Iterator
   auto it = g_iterators.find(hdl);
   if (it == g_iterators.end())
   {
@@ -282,6 +501,7 @@ BOOL __stdcall FsFindNextW(HANDLE hdl, WIN32_FIND_DATA* data)
 int __stdcall FsFindClose(HANDLE hdl)
 {
   g_iterators.erase(hdl);
+  g_rootIterators.erase(hdl);
   return 0;
 }
 
@@ -289,13 +509,23 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
                          RemoteInfoStruct* ri)
 {
   debug_msg(L"FsGetFileW called with RemoteName=", RemoteName, L" and LocalName=", LocalName,
-            L" RemoteName mapped to ", p.c_str(), L" CopyFlags=", CopyFlags);
-  try
-  {
-    int result = g_plugin.attr("get_file")(RemoteName, LocalName, CopyFlags).cast<int>();
-    return result;
-  }
-  catch (...) { return FS_FILE_READERROR; }
+            L" CopyFlags=", CopyFlags);
+  return pyCall([&]() -> int
+                {
+                  auto [pluginName, subPath] = splitPath(wcharToUtf8(RemoteName));
+                  auto it = g_plugins.find(pluginName);
+                  if (it == g_plugins.end()) return FS_FILE_NOTFOUND;
+
+                  return it->second.attr("get_file")(subPath,
+                                                     wcharToUtf8(LocalName),
+                                                     CopyFlags).cast<int>();
+                }, FS_FILE_READERROR);
+  //try
+  //{
+  //  int result = g_plugin.attr("get_file")(RemoteName, LocalName, CopyFlags).cast<int>();
+  //  return result;
+  //}
+  //catch (...) { return FS_FILE_READERROR; }
 }
 
 void __stdcall FsGetDefRootName(char* DefRootName, int maxlen) // No Wide-Char version available
