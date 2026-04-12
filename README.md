@@ -32,3 +32,27 @@ Also copy the DLL from `path\to\pythoncore-3.14t-64\python314t.dll`.
 If Total Commander might call from multiple threads, it might slow/block multithreading, 
 when using python versions with GIL.
 
+### pybind11
+
+Create a python virtual environment called venv using the desired python version.
+
+```cmd
+python -m venv venv
+```
+
+Activate this venv:
+
+```cmd
+venv\Scripts\activate
+```
+then your path should look like:
+
+```cmd
+(venv) C:\src\wfx_python>
+```
+
+Add pybind11 within the venv using pip
+
+```cmd
+(venv) C:\src\wfx_python>pip install pybind11
+```

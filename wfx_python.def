@@ -1,0 +1,7 @@
+EXPORTS
+  FsInitW
+  FsFindFirstW
+  FsFindNextW
+  FsFindClose
+  FsGetDefRootName
+  FsGetFileW
