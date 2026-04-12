@@ -1,5 +1,6 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
+#include "format_string.h"
 
 BOOL APIENTRY DllMain(HMODULE hModule,
                       DWORD  ul_reason_for_call,
@@ -9,19 +10,19 @@ BOOL APIENTRY DllMain(HMODULE hModule,
   switch (ul_reason_for_call)
   {
     case DLL_PROCESS_ATTACH:
-      OutputDebugStringW(L"DllMain DLL_PROCESS_ATTACH called\n");
+      debug_msg(L"DllMain DLL_PROCESS_ATTACH called");
       break;
     case DLL_THREAD_ATTACH:
-      OutputDebugStringW(L"DllMain DLL_THREAD_ATTACH called\n");
+      debug_msg(L"DllMain DLL_THREAD_ATTACH called");
       break;
     case DLL_THREAD_DETACH:
-      OutputDebugStringW(L"DllMain DLL_THREAD_DETACH called\n");
+      debug_msg(L"DllMain DLL_THREAD_DETACH called");
       break;
     case DLL_PROCESS_DETACH:
-      OutputDebugStringW(L"DllMain DLL_PROCESS_DETACH called\n");
+      debug_msg(L"DllMain DLL_PROCESS_DETACH called");
       break;
     default:
-      OutputDebugStringW(L"DllMain unknown reason called\n");
+      debug_msg(L"DllMain unknown reason called");
       break;
   }
   return TRUE;

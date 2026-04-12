@@ -56,16 +56,24 @@ int __stdcall FsInitW(int PluginNr, tProgressProcW pProgressProcW,
   pluginInfo.logProc = pLogProcW;
   pluginInfo.requestProc = pRequestProcW;
 
-  WCHAR test[256] = { 0 };
+  ////
+  //// some tests with getting user infos
+  //// 
+  //WCHAR test[256] = { 0 };
 
-  pRequestProcW(PluginNr, RT_MsgOK, NULL, (WCHAR*)L"WHAAAT", test, 256);
-  debug_msg(L"pRequestProcW returned ", test);
+  //wcscat_s(test, L"DefaultUser");
+
+  //pRequestProcW(PluginNr, RT_UserName, NULL, (WCHAR*)L"Username:", test, 256);
+  //debug_msg(L"pRequestProcW returned ", test, L" as username");
+  //test[0] = 0; // else it would be suggested as default
+  //pRequestProcW(PluginNr, RT_Password, NULL, (WCHAR*)L"Pasword:", test, 256);
+  //debug_msg(L"pRequestProcW returned ", test, L" as pasword");
   return 0;
 }
 
 void __stdcall FsSetDefaultParams(FsDefaultParamStruct* dps)
 {
-  debug_msg(L"FsSetDefaultParams called\n");
+  debug_msg(L"FsSetDefaultParams called");
   // INI-Pfad an Plugin weitergeben damit es seine Config lesen kann
   memset(dps, 0, sizeof(FsDefaultParamStruct));
 }

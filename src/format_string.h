@@ -194,6 +194,8 @@ template<
 >
 inline void debug_msg(Ts&&... ts)
 {
+#ifdef _DEBUG
 	const auto msg = wfx::Tools::format_wstring<spacing_char>(ts..., L"\n");
 	OutputDebugStringW(msg.c_str());
+#endif
 };
