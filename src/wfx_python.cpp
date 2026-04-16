@@ -36,25 +36,25 @@ static std::unordered_map<HANDLE, py::object> g_iterators;
 static std::atomic<uintptr_t>                 g_nextHandle{ 1 };
 
 // Separate Map für Root-Einträge
-static std::unordered_map<HANDLE, std::pair<std::vector<std::string>, size_t>> g_rootIterators;
+static std::unordered_map<HANDLE, std::pair<std::vector<std::wstring>, size_t>> g_rootIterators;
 
 
 // Map: Plugin - Name → Python Plugin - Instanz
-static std::unordered_map<std::string, py::object> g_plugins;
+static std::unordered_map<std::wstring, py::object> g_plugins;
 
 // Hilfsfunktion: Pfad aufsplitten
 // "\S3\bucket\prefix\" → {"S3", "bucket\prefix\"}
-static std::pair<std::string, std::string> splitPath(const std::string& path)
+static std::pair<std::wstring, std::wstring> splitPath(const std::wstring& path)
 {
   // führenden \ entfernen
-  std::string p = path;
-  if (!p.empty() && p[0] == '\\') p = p.substr(1);
+  std::wstring p = path;
+  if (!p.empty() && p[0] == L'\\') p = p.substr(1);
 
-  auto pos = p.find('\\');
-  if (pos == std::string::npos)
-    return { p, "\\" };  // nur Plugin-Name, kein Unterpfad
+  auto pos = p.find(L'\\');
+  if (pos == std::wstring::npos)
+    return { p, L"\\" };  // nur Plugin-Name, kein Unterpfad
 
-  return { p.substr(0, pos), "\\" + p.substr(pos + 1) };
+  return { p.substr(0, pos), L"\\" + p.substr(pos + 1) };
 }
 
 static std::string wcharToUtf8(const WCHAR* wstr)
@@ -68,16 +68,16 @@ static std::string wcharToUtf8(const WCHAR* wstr)
   return result;
 }
 
-static std::vector<std::pair<std::string, std::filesystem::path>>
-readPluginsFromIni(const std::string& iniPath)
+static std::vector<std::pair<std::wstring, std::filesystem::path>>
+readPluginsFromIni(const std::filesystem::path& iniPath)
 {
-  std::vector<std::pair<std::string, std::filesystem::path>> result;
+  std::vector<std::pair<std::wstring, std::filesystem::path>> result;
 
   // Alle Keys aus [Plugins] Section lesen
   // GetPrivateProfileSection gibt alle Key=Value Paare auf einmal
-  char buf[4096] = {};
-  DWORD written = GetPrivateProfileSectionA(
-    "Plugins",
+  WCHAR buf[4096] = {};
+  DWORD written = GetPrivateProfileSectionW(
+    L"Plugins",
     buf,
     sizeof(buf),
     iniPath.c_str()
@@ -87,29 +87,31 @@ readPluginsFromIni(const std::string& iniPath)
 
   // buf ist null-separated, doppel-null terminiert
   // Format: "Name=C:\path\to\plugin.py\0Name2=...\0\0"
-  const char* p = buf;
+  const WCHAR* p = buf;
   while (*p) // TODO: einfacher machen
   {
-    std::string entry(p);
+    std::wstring entry(p);
     p += entry.size() + 1; // nächster Eintrag
 
     auto eq = entry.find('=');
-    if (eq == std::string::npos) continue;
+    if (eq == std::wstring::npos) continue;
 
-    std::string name = entry.substr(0, eq);
-    std::string path = entry.substr(eq + 1);
+    std::wstring name = entry.substr(0, eq);
+    std::wstring path = entry.substr(eq + 1);
 
     // Whitespace trimmen
-    auto trim = [](std::string& s)
+    auto trim = [](std::wstring& s)
       {
-        s.erase(0, s.find_first_not_of(" \t"));
-        s.erase(s.find_last_not_of(" \t") + 1);
+        s.erase(0, s.find_first_not_of(L" \t"));
+        s.erase(s.find_last_not_of(L" \t") + 1);
       };
     trim(name);
     trim(path);
 
     if (!name.empty() && !path.empty())
+    {
       result.emplace_back(name, std::filesystem::path(path));
+    }
   }
 
   return result;
@@ -129,22 +131,23 @@ static void fillFindDataFromDict(WIN32_FIND_DATAW* data, py::dict entry)
     : FILE_ATTRIBUTE_NORMAL;
 }
 
-static void fillRootEntry(WIN32_FIND_DATAW* data, const std::string& name)
+static void fillRootEntry(WIN32_FIND_DATAW* data, const std::wstring& name)
 {
   memset(data, 0, sizeof(WIN32_FIND_DATAW));
-  MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1,
-                      data->cFileName, MAX_PATH);
+  wcscpy_s(data->cFileName, name.c_str());
+  //MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1,
+  //                    data->cFileName, MAX_PATH);
   data->dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
 }
 
 HANDLE __stdcall FsFindFirstW(WCHAR* path, WIN32_FIND_DATAW* data)
 {
-  std::string p = wcharToUtf8(path);
+  std::wstring p = path;// wcharToUtf8(path);
 
   // In FsFindFirstW bei Root:
-  if (p == "\\" || p.empty())
+  if (p == L"\\" || p.empty())
   {
-    std::vector<std::string> names;
+    std::vector<std::wstring> names;
     for (auto& [name, _] : g_plugins)
       names.push_back(name);
 
@@ -167,10 +170,10 @@ HANDLE __stdcall FsFindFirstW(WCHAR* path, WIN32_FIND_DATAW* data)
                 {
 
                   // Root "\" → alle registrierten Plugins als Verzeichnisse
-                  if (p == "\\" || p.empty())
+                  if (p == L"\\" || p.empty())
                   {
                     // Synthetic iterator über g_plugins keys
-                    auto keys = std::make_shared<std::vector<std::string>>();
+                    auto keys = std::make_shared<std::vector<std::wstring>>();
                     for (auto& [name, _] : g_plugins)
                       keys->push_back(name);
 
@@ -225,7 +228,21 @@ HANDLE __stdcall FsFindFirstW(WCHAR* path, WIN32_FIND_DATAW* data)
                 }, INVALID_HANDLE_VALUE);
 }
 
+static std::filesystem::path getDllDir()
+{
+  HMODULE hModule = nullptr;
+  GetModuleHandleExW(
+    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    reinterpret_cast<LPCWSTR>(&getDllDir), // Adresse einer Funktion in dieser DLL
+    &hModule
+  );
 
+  WCHAR path[MAX_PATH] = {};
+  GetModuleFileNameW(hModule, path, MAX_PATH);
+
+  return std::filesystem::path(path).parent_path();
+}
 
 PYBIND11_EMBEDDED_MODULE(tcbridge, m)
 {
@@ -387,7 +404,12 @@ int __stdcall FsInitW(int PluginNr, tProgressProcW pProgressProcW,
   // S3=C:\plugins\s3plugin.py
   // Test=C:\plugins\testplugin.py
 
-  for (auto& [name, scriptPath] : readPluginsFromIni(R"(Plugins.ini)"))
+  auto iniPath = getDllDir();
+  iniPath /= L"PythonPlugins.ini";
+
+  debug_msg(L"Ini path is ", iniPath.c_str());
+
+  for (auto& [name, scriptPath] : readPluginsFromIni(iniPath))
   {
     // sys.path erweitern damit import funktioniert
     py::module_::import("sys")
@@ -397,15 +419,29 @@ int __stdcall FsInitW(int PluginNr, tProgressProcW pProgressProcW,
     try
     {
       py::module_ mod = py::module_::import(scriptPath.stem().string().c_str());
-      py::object  plugin = mod.attr(name.c_str())();
+      py::object  plugin = mod.attr(wcharToUtf8(name.c_str()).c_str())();
       g_plugins[name] = plugin;
     }
     catch (std::exception& ex)
     {
       std::string s(ex.what());
-      debug_msg_a("Error while loading plugin ", name, " from ini: ", s);
+      debug_msg_a("Error while loading plugin ", wcharToUtf8(name.c_str()), " from ini: ", s);
     }
   }
+
+  //py::module_ sys = py::module_::import("sys");
+  //sys.attr("path").attr("append")("../../python");
+
+  //try
+  //{
+  //  py::module_ mod = py::module_::import("s3plugin");
+  //  g_plugin = mod.attr("S3Plugin")();  // Instanz anlegen
+  //}
+  //catch (std::exception& ex)
+  //{
+  //  std::string s(ex.what());
+  //  debug_msg_a("hi");
+  //}
 
   return 0;
 }
@@ -512,7 +548,7 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
             L" CopyFlags=", CopyFlags);
   return pyCall([&]() -> int
                 {
-                  auto [pluginName, subPath] = splitPath(wcharToUtf8(RemoteName));
+                  auto [pluginName, subPath] = splitPath(RemoteName);
                   auto it = g_plugins.find(pluginName);
                   if (it == g_plugins.end()) return FS_FILE_NOTFOUND;
 
@@ -531,5 +567,5 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
 void __stdcall FsGetDefRootName(char* DefRootName, int maxlen) // No Wide-Char version available
 {
   debug_msg(L"FsGetDefRootName called");
-  strcpy_s(DefRootName, maxlen, "WFX Python bridge");
+  strcpy_s(DefRootName, maxlen, "Python");
 }
